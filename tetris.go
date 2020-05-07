@@ -3,6 +3,7 @@ package tetris
 import (
 	"fmt"
 	"math/rand"
+	"sync"
 	"time"
 )
 
@@ -51,10 +52,10 @@ func (f CompleteHandlerFunc) OnCompleted(rows int) {
 }
 
 type State struct {
-	tiles              [][]Tile
-	current, next      Tetromino
-	currentX, currentY int
-	isOver             bool
+	Tiles              [][]Tile
+	Current, Next      Tetromino
+	CurrentX, CurrentY int
+	IsOver             bool
 }
 
 type Board struct {
@@ -68,6 +69,7 @@ type Board struct {
 	isOver             bool
 
 	renderFrame [][]Tile
+	m           *sync.RWMutex
 }
 
 type BoardOption func(*Board)
@@ -96,9 +98,10 @@ func WithCompleteHandler(handler CompleteHandler) BoardOption {
 
 func NewBoard(options ...BoardOption) *Board {
 	board := &Board{
-		tetrominoGetter: NewRandomGetter(),
+		tetrominoGetter: NewRandomGetter(time.Now().UnixNano()),
 		width:           10,
 		height:          24,
+		m:               &sync.RWMutex{},
 	}
 	for _, opt := range options {
 		opt(board)
@@ -123,19 +126,42 @@ func NewBoard(options ...BoardOption) *Board {
 	return board
 }
 
-func (b *Board) Set(state State) {
-	b.current = state.current
-	b.currentX = state.currentX
-	b.currentY = state.currentY
-	b.isOver = state.isOver
-	b.next = state.next
+func (b *Board) SetState(state State) {
+	b.m.Lock()
+	b.m.Unlock()
+
+	b.current = state.Current
+	b.currentX = state.CurrentX
+	b.currentY = state.CurrentY
+	b.tiles = state.Tiles
+	b.isOver = state.IsOver
+	b.next = state.Next
+}
+
+func (b *Board) GetState() State {
+	b.m.RLock()
+	b.m.RUnlock()
+
+	return State{
+		Tiles:    b.tiles,
+		Current:  b.current,
+		Next:     b.next,
+		CurrentX: b.currentX,
+		CurrentY: b.currentY,
+		IsOver:   b.isOver,
+	}
 }
 
 func (b *Board) Next() Tetromino {
+	b.m.RLock()
+	b.m.RUnlock()
 	return b.next
 }
 
 func (b *Board) Apply(action Action) {
+	b.m.Lock()
+	b.m.Unlock()
+
 	if b.isOver {
 		return
 	}
@@ -424,6 +450,9 @@ func (b *Board) raiseGround() {
 }
 
 func (b *Board) Render() [][]Tile {
+	b.m.RLock()
+	b.m.RUnlock()
+
 	for y := 0; y < b.height; y++ {
 		for x := 0; x < b.width; x++ {
 			b.renderFrame[y][x] = b.tiles[y][x]
@@ -448,9 +477,9 @@ type RandomGetter struct {
 	tetrominos []Tetromino
 }
 
-func NewRandomGetter() *RandomGetter {
+func NewRandomGetter(seed int64) *RandomGetter {
 	return &RandomGetter{
-		randomizer: rand.New(rand.NewSource(time.Now().UnixNano())),
+		randomizer: rand.New(rand.NewSource(seed)),
 		tetrominos: []Tetromino{
 			TetrominoT,
 			TetrominoL,
